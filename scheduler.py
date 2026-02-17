@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 def _scrape_job():
     """Job function called by scheduler."""
-    from scraper import scrape_all
+    from scraper import scrape_all, _post_scrape_enrich
     logger.info("=== Scheduled scrape starting ===")
     try:
         changes = scrape_all()
@@ -24,6 +24,8 @@ def _scrape_job():
             f"=== Scheduled scrape done. {total} changes "
             f"({new} new, {restocks} restocks) ==="
         )
+        if new > 0:
+            _post_scrape_enrich(changes)
     except Exception as e:
         logger.error(f"Scheduled scrape failed: {e}")
 

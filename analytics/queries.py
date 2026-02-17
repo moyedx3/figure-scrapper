@@ -48,6 +48,18 @@ def get_total_products() -> int:
 
 
 @st.cache_data(ttl=300)
+def get_latest_crawl_time() -> str | None:
+    """Get the timestamp of the most recent crawl (latest last_checked_at)."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT last_checked_at FROM products WHERE last_checked_at IS NOT NULL "
+        "ORDER BY last_checked_at DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+@st.cache_data(ttl=300)
 def get_recent_new_products(days: int = 7) -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql_query(

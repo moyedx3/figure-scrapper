@@ -92,6 +92,7 @@ class ChangeDetector:
                 site=product.site,
                 category=product.category or "",
                 manufacturer=product.manufacturer,
+                url=product.url,
             )
             save_extraction(self.conn, db_id, attrs.model_dump(), method, confidence)
         except Exception as e:

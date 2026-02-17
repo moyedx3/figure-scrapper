@@ -127,21 +127,28 @@ def upsert_product(conn: sqlite3.Connection, product: Product) -> int:
     ).fetchone()
 
     if row:
+        # Don't overwrite jan_code with NULL — it may have been scraped from detail pages
         conn.execute(
             """UPDATE products SET
                 name = ?, price = ?, status = ?, category = ?, figure_type = ?,
-                manufacturer = ?, jan_code = ?, release_date = ?, order_deadline = ?,
+                manufacturer = ?, release_date = ?, order_deadline = ?,
                 size = ?, material = ?, has_bonus = ?, image_url = ?,
                 review_count = ?, url = ?, last_checked_at = ?
             WHERE id = ?""",
             (
                 product.name, product.price, product.status, product.category,
-                product.figure_type, product.manufacturer, product.jan_code,
+                product.figure_type, product.manufacturer,
                 product.release_date, product.order_deadline, product.size,
                 product.material, product.has_bonus, product.image_url,
                 product.review_count, product.url, now, row["id"],
             ),
         )
+        # Only update jan_code if the parser provides one
+        if product.jan_code:
+            conn.execute(
+                "UPDATE products SET jan_code = ? WHERE id = ?",
+                (product.jan_code, row["id"]),
+            )
         return row["id"]
     else:
         cursor = conn.execute(

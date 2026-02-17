@@ -134,6 +134,43 @@ def extract_existing(site: str | None = None, force_llm: bool = False, re_extrac
     logger.info(f"=== Extraction done: {success}/{total} products ({methods_str}) ===")
 
 
+def _post_scrape_enrich(changes: list):
+    """After scraping, fetch JAN codes for new products and re-run matching."""
+    from extraction.page_fetcher import fetch_product_detail
+
+    new_changes = [c for c in changes if c.change_type == "new"]
+    if not new_changes:
+        return
+
+    # Fetch JAN codes from product detail pages for new products
+    conn = get_connection()
+    jan_found = 0
+    for change in new_changes:
+        p = change.product
+        if not p.url or p.site == "comicsart":
+            continue
+        specs = fetch_product_detail(p.url, p.site)
+        if specs and specs.get("jan_code"):
+            jan = specs["jan_code"].strip()
+            if len(jan) >= 8:
+                conn.execute(
+                    "UPDATE products SET jan_code = ? WHERE site = ? AND product_id = ?",
+                    (jan, p.site, p.product_id),
+                )
+                jan_found += 1
+
+    conn.commit()
+    conn.close()
+
+    if jan_found:
+        logger.info(f"=== Post-scrape: {jan_found} JAN codes fetched for new products ===")
+
+    # Re-run matching to pick up new cross-site groups
+    from analytics.matching import run_matching
+    n_groups = run_matching()
+    logger.info(f"=== Post-scrape: matching updated — {n_groups} groups ===")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Figure website scraper")
     parser.add_argument(
@@ -173,6 +210,10 @@ def main():
         new = sum(1 for c in changes if c.change_type == "new")
         restocks = sum(1 for c in changes if c.change_type == "restock")
         logger.info(f"=== Done. {total} changes ({new} new, {restocks} restocks) ===")
+
+        # Post-scrape: fetch JAN codes for new products and re-run matching
+        if new > 0:
+            _post_scrape_enrich(changes)
     else:
         # Run with scheduler
         from scheduler import run_scheduler

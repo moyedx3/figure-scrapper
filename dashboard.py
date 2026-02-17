@@ -1,6 +1,10 @@
 """Figure Scraper Analytics Dashboard — Streamlit entrypoint."""
 
+import sqlite3
+
 import streamlit as st
+
+from config import DB_PATH
 
 st.set_page_config(
     page_title="피규어 스크래퍼 대시보드",
@@ -10,6 +14,19 @@ st.set_page_config(
 
 # --- Sidebar ---
 st.sidebar.title("피규어 분석 대시보드")
+
+# Last crawl info
+conn = sqlite3.connect(DB_PATH)
+row = conn.execute(
+    "SELECT last_checked_at FROM products WHERE last_checked_at IS NOT NULL ORDER BY last_checked_at DESC LIMIT 1"
+).fetchone()
+conn.close()
+if row:
+    st.sidebar.caption(f"마지막 크롤링: {row[0][:16]}")
+
+if st.sidebar.button("🔄 데이터 새로고침"):
+    st.cache_data.clear()
+    st.rerun()
 
 # --- Navigation ---
 pages = [
