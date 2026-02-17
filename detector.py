@@ -9,8 +9,10 @@ from db import (
     get_product,
     log_price,
     log_status_change,
+    save_extraction,
     upsert_product,
 )
+from extraction.extractor import extract_product_attributes
 from models import Product
 
 logger = logging.getLogger(__name__)
@@ -51,8 +53,14 @@ class ChangeDetector:
                     new_value=product.status,
                 ))
 
+            is_new = product.product_id not in known_ids
+
             # Upsert into DB
             db_id = upsert_product(self.conn, product)
+
+            # Extract structured fields for new products
+            if is_new:
+                self._extract_and_save(db_id, product)
 
             # Record price history for every check
             if product.price is not None:
@@ -75,6 +83,19 @@ class ChangeDetector:
             logger.info(f"[{site}] No changes detected")
 
         return changes
+
+    def _extract_and_save(self, db_id: int, product: Product):
+        """Run structured extraction on a product and save results."""
+        try:
+            attrs, method, confidence = extract_product_attributes(
+                name=product.name,
+                site=product.site,
+                category=product.category or "",
+                manufacturer=product.manufacturer,
+            )
+            save_extraction(self.conn, db_id, attrs.model_dump(), method, confidence)
+        except Exception as e:
+            logger.warning(f"Extraction failed for {product.name}: {e}")
 
     def _check_existing(self, product: Product) -> list[Change]:
         """Check an existing product for status and price changes."""

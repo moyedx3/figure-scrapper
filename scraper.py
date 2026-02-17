@@ -81,6 +81,38 @@ def scrape_all() -> list:
     return all_changes
 
 
+def extract_existing(site: str | None = None):
+    """Backfill extraction for products that haven't been extracted yet."""
+    from db import get_unextracted_products, save_extraction
+    from extraction.extractor import extract_product_attributes
+
+    conn = get_connection()
+    products = get_unextracted_products(conn, site)
+    total = len(products)
+    logger.info(f"Extracting {total} unprocessed products" + (f" (site={site})" if site else ""))
+
+    success = 0
+    for i, row in enumerate(products, 1):
+        try:
+            attrs, method, confidence = extract_product_attributes(
+                name=row["name"],
+                site=row["site"],
+                category=row.get("category", ""),
+                manufacturer=row.get("manufacturer"),
+            )
+            save_extraction(conn, row["id"], attrs.model_dump(), method, confidence)
+            success += 1
+            if i % 100 == 0:
+                conn.commit()
+                logger.info(f"  Progress: {i}/{total} ({success} extracted)")
+        except Exception as e:
+            logger.warning(f"  Failed to extract [{row['site']}] {row['name']}: {e}")
+
+    conn.commit()
+    conn.close()
+    logger.info(f"=== Extraction done: {success}/{total} products extracted ===")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Figure website scraper")
     parser.add_argument(
@@ -89,9 +121,16 @@ def main():
     parser.add_argument(
         "--once", action="store_true", help="Run once and exit (no scheduler)"
     )
+    parser.add_argument(
+        "--extract", action="store_true", help="Backfill extraction for unprocessed products"
+    )
     args = parser.parse_args()
 
     init_db()
+
+    if args.extract:
+        extract_existing(args.site)
+        return
 
     if args.once or args.site:
         if args.site:
