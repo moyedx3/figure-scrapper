@@ -14,18 +14,20 @@ def extract_product_attributes(
     site: str = "",
     category: str = "",
     manufacturer: str | None = None,
+    force_llm: bool = False,
 ) -> tuple[ProductAttributes, str, float]:
     """Extract structured fields from a product name.
 
     Returns (attributes, method, confidence).
+    If force_llm=True, always use LLM (skips rules threshold check).
     """
     # Step 1: Try rule-based extraction
     attrs, confidence = extract_with_rules(name, manufacturer)
 
-    if confidence >= EXTRACTION_CONFIDENCE_THRESHOLD:
+    if not force_llm and confidence >= EXTRACTION_CONFIDENCE_THRESHOLD:
         return attrs, "rules", confidence
 
-    # Step 2: LLM fallback (if enabled)
+    # Step 2: LLM (fallback or forced)
     if not EXTRACTION_LLM_ENABLED:
         return attrs, "rules", confidence
 

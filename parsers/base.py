@@ -57,6 +57,8 @@ class Cafe24BaseParser:
             products = self.parse_product_list(soup, category)
             if not products:
                 break
+            # Filter out reservation payment entries
+            products = [p for p in products if "예약금결제" not in p.name]
             all_products.extend(products)
             logger.info(
                 f"[{self.site_name}] Page {page_num}: {len(products)} products"
@@ -89,6 +91,22 @@ class Cafe24BaseParser:
         if not text:
             return None
         cleaned = re.sub(r"[^\d]", "", text)
+        return int(cleaned) if cleaned else None
+
+    @staticmethod
+    def extract_sale_price_from_data_attr(data_price: str) -> Optional[int]:
+        """Parse Cafe24 data-price attribute like '^69000^64000' → 64000.
+
+        Format is '^consumer_price^sale_price' or '^price'.
+        Returns the sale (last) price.
+        """
+        if not data_price:
+            return None
+        parts = [p for p in data_price.split("^") if p]
+        if not parts:
+            return None
+        # Last part is the sale/actual price
+        cleaned = re.sub(r"[^\d]", "", parts[-1])
         return int(cleaned) if cleaned else None
 
     @staticmethod
