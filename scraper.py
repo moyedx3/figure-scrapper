@@ -84,18 +84,30 @@ def scrape_all() -> list:
     return all_changes
 
 
-def extract_existing(site: str | None = None, force_llm: bool = False):
-    """Backfill extraction for products that haven't been extracted yet."""
+def extract_existing(site: str | None = None, force_llm: bool = False, re_extract: bool = False):
+    """Backfill extraction for products that haven't been extracted yet.
+
+    If re_extract=True, re-processes ALL products (even already extracted ones).
+    """
     from db import get_unextracted_products, save_extraction
     from extraction.extractor import extract_product_attributes
 
     conn = get_connection()
-    products = get_unextracted_products(conn, site)
+    if re_extract:
+        query = "SELECT * FROM products"
+        params: list = []
+        if site:
+            query += " WHERE site = ?"
+            params.append(site)
+        products = [dict(r) for r in conn.execute(query, params).fetchall()]
+    else:
+        products = get_unextracted_products(conn, site)
     total = len(products)
-    mode = "force-LLM" if force_llm else "hybrid"
-    logger.info(f"Extracting {total} unprocessed products ({mode})" + (f" (site={site})" if site else ""))
+    mode = "re-extract" if re_extract else ("force-LLM" if force_llm else "hybrid")
+    logger.info(f"Extracting {total} products ({mode})" + (f" (site={site})" if site else ""))
 
     success = 0
+    method_counts: dict[str, int] = {}
     for i, row in enumerate(products, 1):
         try:
             attrs, method, confidence = extract_product_attributes(
@@ -103,19 +115,23 @@ def extract_existing(site: str | None = None, force_llm: bool = False):
                 site=row["site"],
                 category=row.get("category", ""),
                 manufacturer=row.get("manufacturer"),
-                force_llm=force_llm,
+                url=row.get("url"),
+                force_llm=force_llm or re_extract,
             )
             save_extraction(conn, row["id"], attrs.model_dump(), method, confidence)
             success += 1
-            if i % 100 == 0:
+            method_counts[method] = method_counts.get(method, 0) + 1
+            if i % 50 == 0:
                 conn.commit()
-                logger.info(f"  Progress: {i}/{total} ({success} extracted)")
+                methods_str = ", ".join(f"{k}={v}" for k, v in sorted(method_counts.items()))
+                logger.info(f"  Progress: {i}/{total} ({methods_str})")
         except Exception as e:
             logger.warning(f"  Failed to extract [{row['site']}] {row['name']}: {e}")
 
     conn.commit()
     conn.close()
-    logger.info(f"=== Extraction done: {success}/{total} products extracted ===")
+    methods_str = ", ".join(f"{k}={v}" for k, v in sorted(method_counts.items()))
+    logger.info(f"=== Extraction done: {success}/{total} products ({methods_str}) ===")
 
 
 def main():
@@ -132,12 +148,19 @@ def main():
     parser.add_argument(
         "--force-llm", action="store_true", help="Force LLM extraction for all products (skip rules threshold)"
     )
+    parser.add_argument(
+        "--re-extract", action="store_true", help="Re-extract ALL products (even already extracted)"
+    )
     args = parser.parse_args()
 
     init_db()
 
-    if args.extract:
-        extract_existing(args.site, force_llm=getattr(args, "force_llm", False))
+    if args.extract or args.re_extract:
+        extract_existing(
+            args.site,
+            force_llm=getattr(args, "force_llm", False),
+            re_extract=getattr(args, "re_extract", False),
+        )
         return
 
     if args.once or args.site:

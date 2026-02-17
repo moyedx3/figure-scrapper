@@ -41,7 +41,7 @@ def get_products_for_matching() -> pd.DataFrame:
         """SELECT id, site, product_id, name, price, status,
                   manufacturer, jan_code, category,
                   series, character_name, extracted_manufacturer,
-                  scale, version, product_line,
+                  scale, version, product_line, product_type,
                   extraction_confidence
            FROM products""",
         conn,
@@ -86,13 +86,16 @@ def match_by_structured_fields(df: pd.DataFrame) -> dict[str, tuple[list[int], f
     has_fields["_norm_char"] = has_fields["character_name"].apply(_normalize_character)
     has_fields = has_fields[has_fields["_norm_char"] != ""]
 
-    # --- Tier 1: Full match (series + character + manufacturer + scale) ---
+    # --- Tier 1: Full match (series + character + manufacturer + product_type + scale/version) ---
     has_mfr = has_fields[
         has_fields["extracted_manufacturer"].notna()
         & (has_fields["extracted_manufacturer"] != "")
+        & has_fields["product_type"].notna()
     ]
     if not has_mfr.empty:
-        for _, group in has_mfr.groupby(["series", "_norm_char", "extracted_manufacturer", "scale"]):
+        for _, group in has_mfr.groupby(
+            ["series", "_norm_char", "extracted_manufacturer", "product_type", "scale", "version"]
+        ):
             if group["site"].nunique() < 2:
                 continue
             ids = group["id"].tolist()
@@ -101,13 +104,14 @@ def match_by_structured_fields(df: pd.DataFrame) -> dict[str, tuple[list[int], f
             groups[f"struct_full_{group_counter}"] = (ids, round(min(avg_conf or 0.85, 1.0), 2))
             matched_ids.update(ids)
 
-    # --- Tier 2: series + character + product_line ---
+    # --- Tier 2: series + character + product_type + product_line ---
     remaining = has_fields[~has_fields["id"].isin(matched_ids)]
     has_line = remaining[
         remaining["product_line"].notna() & (remaining["product_line"] != "")
+        & remaining["product_type"].notna()
     ]
     if not has_line.empty:
-        for _, group in has_line.groupby(["series", "_norm_char", "product_line"]):
+        for _, group in has_line.groupby(["series", "_norm_char", "product_type", "product_line"]):
             if group["site"].nunique() < 2:
                 continue
             ids = group["id"].tolist()
@@ -115,49 +119,17 @@ def match_by_structured_fields(df: pd.DataFrame) -> dict[str, tuple[list[int], f
             groups[f"struct_line_{group_counter}"] = (ids, 0.75)
             matched_ids.update(ids)
 
-    # --- Tier 3: series + character only (with substring matching) ---
+    # --- Tier 3: series + character + product_type (exact character match) ---
     remaining = has_fields[~has_fields["id"].isin(matched_ids)]
-    if not remaining.empty:
-        # First: exact normalized character match
-        for _, group in remaining.groupby(["series", "_norm_char"]):
+    has_type = remaining[remaining["product_type"].notna()]
+    if not has_type.empty:
+        for _, group in has_type.groupby(["series", "_norm_char", "product_type"]):
             if group["site"].nunique() < 2:
                 continue
             ids = group["id"].tolist()
             group_counter += 1
             groups[f"struct_char_{group_counter}"] = (ids, 0.6)
             matched_ids.update(ids)
-
-        # Then: within same series, find substring matches for remaining
-        still_remaining = has_fields[~has_fields["id"].isin(matched_ids)]
-        if not still_remaining.empty:
-            for series, series_group in still_remaining.groupby("series"):
-                if series_group["site"].nunique() < 2:
-                    continue
-                chars = series_group[["id", "site", "_norm_char"]].to_dict("records")
-                local_matched: set[int] = set()
-
-                for i, c1 in enumerate(chars):
-                    if c1["id"] in local_matched:
-                        continue
-                    cluster = [c1["id"]]
-                    for c2 in chars[i + 1:]:
-                        if c2["id"] in local_matched:
-                            continue
-                        if c1["site"] == c2["site"]:
-                            continue
-                        # Substring match: one name contains the other
-                        n1, n2 = c1["_norm_char"], c2["_norm_char"]
-                        if n1 in n2 or n2 in n1:
-                            cluster.append(c2["id"])
-                            local_matched.add(c2["id"])
-
-                    if len(cluster) > 1:
-                        cluster_sites = series_group[series_group["id"].isin(cluster)]["site"].nunique()
-                        if cluster_sites >= 2:
-                            local_matched.add(c1["id"])
-                            group_counter += 1
-                            groups[f"struct_substr_{group_counter}"] = (cluster, 0.5)
-                            matched_ids.update(cluster)
 
     return groups
 
@@ -201,7 +173,8 @@ def get_saved_matches() -> pd.DataFrame:
                   p.id, p.site, p.name, p.price, p.status,
                   p.manufacturer, p.jan_code, p.url,
                   p.series, p.character_name, p.extracted_manufacturer,
-                  p.scale, p.version, p.product_line
+                  p.scale, p.version, p.product_line, p.product_type,
+                  p.status as product_status
            FROM product_matches pm
            JOIN products p ON pm.product_id = p.id
            ORDER BY pm.match_key, p.site""",

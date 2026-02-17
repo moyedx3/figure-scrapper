@@ -6,9 +6,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from analytics.charts import LAYOUT_DEFAULTS, SITE_COLORS
-from config import DB_PATH
+from config import DB_PATH, EXTRACTION_MODEL
 
 st.header("추출 현황")
 
@@ -202,3 +205,145 @@ if not unextracted_df.empty:
         hide_index=True,
         use_container_width=True,
     )
+
+# --- Sonnet extraction sample test ---
+st.divider()
+st.subheader(f"🧪 추출 샘플 테스트 ({EXTRACTION_MODEL})")
+
+col_sample_btn, col_sample_n = st.columns([1, 2])
+with col_sample_n:
+    sample_n = st.slider("사이트당 샘플 수", 2, 20, 10)
+
+with col_sample_btn:
+    run_sample = st.button("샘플 추출 실행", type="primary")
+
+if run_sample:
+    from extraction.page_fetcher import fetch_product_detail
+    from extraction.llm import extract_with_llm
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    sample_products = []
+    for site in ["figurepresso", "comicsart", "maniahouse", "rabbits", "ttabbaemall"]:
+        rows = conn.execute(
+            "SELECT id, site, name, manufacturer, category, price, url "
+            "FROM products WHERE site = ? ORDER BY RANDOM() LIMIT ?",
+            (site, sample_n),
+        ).fetchall()
+        sample_products.extend([dict(r) for r in rows])
+    conn.close()
+
+    total = len(sample_products)
+    progress = st.progress(0, text="추출 중...")
+    results = []
+
+    for i, p in enumerate(sample_products):
+        # Hybrid: try fetching product detail page first
+        page_detail = None
+        if p.get("url"):
+            try:
+                page_detail = fetch_product_detail(p["url"], p["site"])
+            except Exception:
+                pass
+
+        attrs = extract_with_llm(
+            p["name"], p["site"], p["category"] or "", p["manufacturer"],
+            page_detail=page_detail,
+        )
+        method = "llm+page" if page_detail else "llm"
+        results.append({**p, **attrs.model_dump(), "_method": method, "_page_detail": page_detail})
+        progress.progress((i + 1) / total, text=f"추출 중... {i+1}/{total}")
+
+    progress.empty()
+
+    page_count = sum(1 for r in results if r["_method"] == "llm+page")
+    st.success(f"{total}개 상품 추출 완료 (페이지 활용: {page_count}/{total})")
+
+    # Store in session for display
+    st.session_state["sample_results"] = results
+
+if "sample_results" in st.session_state:
+    results = st.session_state["sample_results"]
+
+    # Filter controls
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        type_filter = st.multiselect(
+            "유형 필터",
+            options=sorted({r["product_type"] for r in results if r.get("product_type")}),
+            default=None,
+            key="sample_type_filter",
+        )
+    with col_f2:
+        site_filter = st.multiselect(
+            "사이트 필터",
+            options=sorted({r["site"] for r in results}),
+            default=None,
+            key="sample_site_filter",
+        )
+    with col_f3:
+        method_filter = st.multiselect(
+            "추출 방법",
+            options=sorted({r.get("_method", "llm") for r in results}),
+            default=None,
+            key="sample_method_filter",
+        )
+
+    filtered = results
+    if type_filter:
+        filtered = [r for r in filtered if r.get("product_type") in type_filter]
+    if method_filter:
+        filtered = [r for r in filtered if r.get("_method", "llm") in method_filter]
+    if site_filter:
+        filtered = [r for r in filtered if r["site"] in site_filter]
+
+    for i, r in enumerate(filtered):
+        price_str = f"₩{int(r['price']):,}" if r.get("price") else "?"
+        type_emoji = {
+            "scale_figure": "🗿", "prize_figure": "🎰", "nendoroid": "🧸",
+            "figma": "🦾", "action_figure": "💪", "plushie": "🧶",
+            "acrylic": "💎", "keychain": "🔑", "badge": "📌",
+            "sticker": "🏷️", "model_kit": "🔧", "goods_other": "📦",
+            "blanket": "🧣",
+        }.get(r.get("product_type", ""), "❓")
+
+        method = r.get("_method", "llm")
+        method_badge = "📄+🤖" if method == "llm+page" else "🤖"
+        with st.expander(
+            f"{type_emoji} {method_badge} **[{r['site']}]** {r['name']}  —  {price_str}"
+        ):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown("**추출 결과**")
+                st.markdown(f"- **유형**: `{r.get('product_type')}`")
+                st.markdown(f"- **작품**: {r.get('series') or '—'}")
+                st.markdown(f"- **캐릭터**: {r.get('character_name') or '—'}")
+                st.markdown(f"- **제조사**: {r.get('manufacturer') or '—'}")
+            with col_b:
+                st.markdown("**상세**")
+                st.markdown(f"- **스케일**: {r.get('scale') or '—'}")
+                st.markdown(f"- **라인**: {r.get('product_line') or '—'}")
+                st.markdown(f"- **버전**: {r.get('version') or '—'}")
+                if r.get("url"):
+                    st.markdown(f"- 🔗 [상품 페이지 열기]({r['url']})")
+
+            # Show page detail info if available
+            page_detail = r.get("_page_detail")
+            if page_detail:
+                st.markdown("---")
+                st.markdown(f"**📄 페이지 추출 데이터** (`{method}`)")
+                detail_parts = []
+                for k, v in page_detail.items():
+                    detail_parts.append(f"`{k}`: {v}")
+                st.markdown(" · ".join(detail_parts))
+
+    # Summary stats
+    st.divider()
+    types = [r.get("product_type") for r in results if r.get("product_type")]
+    if types:
+        from collections import Counter
+        type_counts = Counter(types).most_common()
+        st.markdown("**유형 분포**: " + " · ".join(
+            f"`{t}` ({c})" for t, c in type_counts
+        ))

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS products (
     version TEXT,
     product_line TEXT,
     extracted_manufacturer TEXT,
+    product_type TEXT,
     extraction_method TEXT,
     extraction_confidence REAL,
     extracted_at DATETIME,
@@ -99,6 +100,7 @@ _EXTRACTION_COLUMNS = [
     ("version", "TEXT"),
     ("product_line", "TEXT"),
     ("extracted_manufacturer", "TEXT"),
+    ("product_type", "TEXT"),
     ("extraction_method", "TEXT"),
     ("extraction_confidence", "REAL"),
     ("extracted_at", "DATETIME"),
@@ -233,7 +235,7 @@ def save_extraction(
     conn.execute(
         """UPDATE products SET
             series = ?, character_name = ?, scale = ?, version = ?,
-            product_line = ?, extracted_manufacturer = ?,
+            product_line = ?, extracted_manufacturer = ?, product_type = ?,
             extraction_method = ?, extraction_confidence = ?, extracted_at = ?
         WHERE id = ?""",
         (
@@ -243,6 +245,7 @@ def save_extraction(
             attrs.get("version"),
             attrs.get("product_line"),
             attrs.get("manufacturer"),
+            attrs.get("product_type"),
             method,
             confidence,
             now,

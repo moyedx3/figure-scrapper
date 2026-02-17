@@ -14,7 +14,7 @@ DB_PATH = "figures.db"
 # AI Extraction settings
 EXTRACTION_LLM_ENABLED = True       # Set False to use rules-only
 EXTRACTION_CONFIDENCE_THRESHOLD = 0.7  # Below this, use LLM
-EXTRACTION_MODEL = "claude-haiku-4-5-20251001"
+EXTRACTION_MODEL = "claude-sonnet-4-5-20250929"
 
 SITES = {
     "figurepresso": {

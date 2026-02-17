@@ -64,11 +64,11 @@ class TtabbaemallParser(Cafe24BaseParser):
 
         status, name = self.parse_status_prefix(raw_name)
 
-        # Price — data-price or li[rel="판매가"] span or ul.spec li span
+        # Price — data-price (e.g., "^69000^64000") or li[rel="판매가"] span or ul.spec li span
         price = None
         data_price = li.get("data-price", "")
         if data_price:
-            price = self.extract_price(data_price.lstrip("^"))
+            price = self.extract_sale_price_from_data_attr(data_price)
 
         if price is None:
             # Try li[rel="판매가"] span

@@ -76,11 +76,11 @@ class RabbitsParser(Cafe24BaseParser):
 
         status, name = self.parse_status_prefix(raw_name)
 
-        # Price — data-price attribute (e.g., "^91500") or spec list
+        # Price — data-price attribute (e.g., "^91500" or "^170000^85000") or spec list
         price = None
         data_price = li.get("data-price", "")
         if data_price:
-            price = self.extract_price(data_price.lstrip("^"))
+            price = self.extract_sale_price_from_data_attr(data_price)
         if price is None:
             spec_items = li.select("ul.spec li span")
             for span in spec_items:
