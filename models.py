@@ -24,6 +24,15 @@ class Product:
     image_url: Optional[str] = None
     review_count: int = 0
     url: Optional[str] = None
+    # Structured extraction fields
+    series: Optional[str] = None
+    character_name: Optional[str] = None
+    scale: Optional[str] = None
+    version: Optional[str] = None
+    product_line: Optional[str] = None
+    extracted_manufacturer: Optional[str] = None
+    extraction_method: Optional[str] = None
+    extraction_confidence: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -30,6 +30,15 @@ CREATE TABLE IF NOT EXISTS products (
     first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_checked_at DATETIME,
     soldout_at DATETIME,
+    series TEXT,
+    character_name TEXT,
+    scale TEXT,
+    version TEXT,
+    product_line TEXT,
+    extracted_manufacturer TEXT,
+    extraction_method TEXT,
+    extraction_confidence REAL,
+    extracted_at DATETIME,
     UNIQUE(site, product_id)
 );
 
@@ -79,7 +88,32 @@ def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
 def init_db(db_path: str = DB_PATH):
     conn = get_connection(db_path)
     conn.executescript(SCHEMA)
+    _migrate_extraction_columns(conn)
     conn.close()
+
+
+_EXTRACTION_COLUMNS = [
+    ("series", "TEXT"),
+    ("character_name", "TEXT"),
+    ("scale", "TEXT"),
+    ("version", "TEXT"),
+    ("product_line", "TEXT"),
+    ("extracted_manufacturer", "TEXT"),
+    ("extraction_method", "TEXT"),
+    ("extraction_confidence", "REAL"),
+    ("extracted_at", "DATETIME"),
+]
+
+
+def _migrate_extraction_columns(conn: sqlite3.Connection):
+    """Add extraction columns to existing products table if missing."""
+    existing = {
+        row[1] for row in conn.execute("PRAGMA table_info(products)").fetchall()
+    }
+    for col_name, col_type in _EXTRACTION_COLUMNS:
+        if col_name not in existing:
+            conn.execute(f"ALTER TABLE products ADD COLUMN {col_name} {col_type}")
+    conn.commit()
 
 
 def upsert_product(conn: sqlite3.Connection, product: Product) -> int:
@@ -185,3 +219,46 @@ def log_price(conn: sqlite3.Connection, product_db_id: int, price: int):
         "INSERT INTO price_history (product_id, price) VALUES (?, ?)",
         (product_db_id, price),
     )
+
+
+def save_extraction(
+    conn: sqlite3.Connection,
+    product_db_id: int,
+    attrs: dict,
+    method: str,
+    confidence: float,
+):
+    """Save structured extraction results to a product row."""
+    now = datetime.now().isoformat()
+    conn.execute(
+        """UPDATE products SET
+            series = ?, character_name = ?, scale = ?, version = ?,
+            product_line = ?, extracted_manufacturer = ?,
+            extraction_method = ?, extraction_confidence = ?, extracted_at = ?
+        WHERE id = ?""",
+        (
+            attrs.get("series"),
+            attrs.get("character_name"),
+            attrs.get("scale"),
+            attrs.get("version"),
+            attrs.get("product_line"),
+            attrs.get("manufacturer"),
+            method,
+            confidence,
+            now,
+            product_db_id,
+        ),
+    )
+
+
+def get_unextracted_products(
+    conn: sqlite3.Connection, site: Optional[str] = None
+) -> list[dict]:
+    """Get products that haven't been extracted yet."""
+    query = "SELECT * FROM products WHERE extracted_at IS NULL"
+    params: list = []
+    if site:
+        query += " AND site = ?"
+        params.append(site)
+    rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
