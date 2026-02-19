@@ -16,24 +16,18 @@ def extract_product_attributes(
     manufacturer: str | None = None,
     url: str | None = None,
     force_llm: bool = False,
-) -> tuple[ProductAttributes, str, float]:
+) -> tuple[ProductAttributes, str, float, dict | None]:
     """Extract structured fields from a product name.
 
-    Returns (attributes, method, confidence).
+    Returns (attributes, method, confidence, page_specs).
+    page_specs contains data fetched from the detail page (including jan_code).
     If url is provided, tries to fetch the product detail page for richer context.
     If force_llm=True, always use LLM (skips rules threshold check).
     """
     # Step 1: Try rule-based extraction
     attrs, confidence = extract_with_rules(name, manufacturer)
 
-    if not force_llm and confidence >= EXTRACTION_CONFIDENCE_THRESHOLD:
-        return attrs, "rules", confidence
-
-    # Step 2: LLM (fallback or forced)
-    if not EXTRACTION_LLM_ENABLED:
-        return attrs, "rules", confidence
-
-    # Step 2a: Try to fetch product detail page for extra context
+    # Step 1a: Fetch product detail page (needed for both rules-only and LLM paths)
     page_detail = None
     if url:
         try:
@@ -41,6 +35,13 @@ def extract_product_attributes(
             page_detail = fetch_product_detail(url, site)
         except Exception as e:
             logger.debug(f"Page fetch failed for {url}: {e}")
+
+    if not force_llm and confidence >= EXTRACTION_CONFIDENCE_THRESHOLD:
+        return attrs, "rules", confidence, page_detail
+
+    # Step 2: LLM (fallback or forced)
+    if not EXTRACTION_LLM_ENABLED:
+        return attrs, "rules", confidence, page_detail
 
     try:
         from extraction.llm import extract_with_llm
@@ -60,8 +61,8 @@ def extract_product_attributes(
             product_type=llm_attrs.product_type,
         )
         method = "llm+page" if page_detail else "llm"
-        return merged, method, 0.90 if page_detail else 0.85
+        return merged, method, 0.90 if page_detail else 0.85, page_detail
 
     except Exception as e:
         logger.warning(f"LLM extraction failed, using rules only: {e}")
-        return attrs, "rules", confidence
+        return attrs, "rules", confidence, page_detail

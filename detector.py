@@ -85,9 +85,13 @@ class ChangeDetector:
         return changes
 
     def _extract_and_save(self, db_id: int, product: Product):
-        """Run structured extraction on a product and save results."""
+        """Run structured extraction on a product and save results.
+
+        Also saves the JAN code from the detail page fetch (if found) so that
+        _post_scrape_enrich doesn't need to re-fetch the same page.
+        """
         try:
-            attrs, method, confidence = extract_product_attributes(
+            attrs, method, confidence, page_specs = extract_product_attributes(
                 name=product.name,
                 site=product.site,
                 category=product.category or "",
@@ -95,6 +99,15 @@ class ChangeDetector:
                 url=product.url,
             )
             save_extraction(self.conn, db_id, attrs.model_dump(), method, confidence)
+
+            # Save JAN code from page fetch right away (avoids duplicate fetch)
+            if page_specs and page_specs.get("jan_code"):
+                jan = page_specs["jan_code"].strip()
+                if len(jan) >= 8:
+                    self.conn.execute(
+                        "UPDATE products SET jan_code = ? WHERE id = ?",
+                        (jan, db_id),
+                    )
         except Exception as e:
             logger.warning(f"Extraction failed for {product.name}: {e}")
 

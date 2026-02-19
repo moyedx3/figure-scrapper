@@ -110,7 +110,7 @@ def extract_existing(site: str | None = None, force_llm: bool = False, re_extrac
     method_counts: dict[str, int] = {}
     for i, row in enumerate(products, 1):
         try:
-            attrs, method, confidence = extract_product_attributes(
+            attrs, method, confidence, page_specs = extract_product_attributes(
                 name=row["name"],
                 site=row["site"],
                 category=row.get("category", ""),
@@ -119,6 +119,14 @@ def extract_existing(site: str | None = None, force_llm: bool = False, re_extrac
                 force_llm=force_llm or re_extract,
             )
             save_extraction(conn, row["id"], attrs.model_dump(), method, confidence)
+            # Save JAN code from page fetch if available
+            if page_specs and page_specs.get("jan_code"):
+                jan = page_specs["jan_code"].strip()
+                if len(jan) >= 8:
+                    conn.execute(
+                        "UPDATE products SET jan_code = ? WHERE id = ?",
+                        (jan, row["id"]),
+                    )
             success += 1
             method_counts[method] = method_counts.get(method, 0) + 1
             if i % 50 == 0:
@@ -135,20 +143,34 @@ def extract_existing(site: str | None = None, force_llm: bool = False, re_extrac
 
 
 def _post_scrape_enrich(changes: list):
-    """After scraping, fetch JAN codes for new products and re-run matching."""
+    """After scraping, fetch JAN codes for new products that didn't get one
+    during extraction, then re-run matching."""
+    import time
     from extraction.page_fetcher import fetch_product_detail
 
     new_changes = [c for c in changes if c.change_type == "new"]
     if not new_changes:
         return
 
-    # Fetch JAN codes from product detail pages for new products
+    # Only fetch JAN for products that didn't already get one in _extract_and_save
     conn = get_connection()
     jan_found = 0
     for change in new_changes:
         p = change.product
         if not p.url or p.site == "comicsart":
             continue
+
+        # Check if JAN was already saved during extraction
+        row = conn.execute(
+            "SELECT jan_code FROM products WHERE site = ? AND product_id = ?",
+            (p.site, p.product_id),
+        ).fetchone()
+        if row and row["jan_code"]:
+            continue
+
+        # Longer delay to avoid CDN caching stale responses
+        time.sleep(2.0)
+
         specs = fetch_product_detail(p.url, p.site)
         if specs and specs.get("jan_code"):
             jan = specs["jan_code"].strip()
@@ -160,15 +182,56 @@ def _post_scrape_enrich(changes: list):
                 jan_found += 1
 
     conn.commit()
-    conn.close()
 
     if jan_found:
         logger.info(f"=== Post-scrape: {jan_found} JAN codes fetched for new products ===")
+
+    # Safety check: clear same-site duplicate JAN codes (bad data from CDN caching)
+    dupes_cleared = _clear_duplicate_jan_codes(conn)
+    if dupes_cleared:
+        logger.warning(f"=== Post-scrape: cleared {dupes_cleared} duplicate JAN codes ===")
+
+    conn.close()
 
     # Re-run matching to pick up new cross-site groups
     from analytics.matching import run_matching
     n_groups = run_matching()
     logger.info(f"=== Post-scrape: matching updated — {n_groups} groups ===")
+
+
+def _clear_duplicate_jan_codes(conn) -> int:
+    """Detect and nullify same-site duplicate JAN codes.
+
+    If multiple products on the same site share a JAN code, keep only the first
+    one (lowest product ID) and clear the rest — same-site duplicates are always
+    bad data from CDN caching.
+    """
+    dupes = conn.execute("""
+        SELECT site, jan_code, GROUP_CONCAT(product_id) as pids, COUNT(*) as cnt
+        FROM products
+        WHERE jan_code IS NOT NULL AND jan_code != ''
+        GROUP BY site, jan_code
+        HAVING cnt > 1
+    """).fetchall()
+
+    cleared = 0
+    for row in dupes:
+        site = row["site"]
+        jan = row["jan_code"]
+        pids = row["pids"].split(",")
+        # Keep the first (lowest) product_id, clear the rest
+        keep_pid = min(pids, key=lambda x: int(x))
+        for pid in pids:
+            if pid != keep_pid:
+                conn.execute(
+                    "UPDATE products SET jan_code = NULL WHERE site = ? AND product_id = ?",
+                    (site, pid),
+                )
+                cleared += 1
+
+    if cleared:
+        conn.commit()
+    return cleared
 
 
 def main():

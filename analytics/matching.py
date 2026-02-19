@@ -51,10 +51,20 @@ def get_products_for_matching() -> pd.DataFrame:
 
 
 def match_by_jan_code(df: pd.DataFrame) -> dict[str, list[int]]:
-    """Exact match products sharing a JAN/barcode across sites."""
-    with_jan = df[df["jan_code"].notna() & (df["jan_code"] != "")]
-    groups: dict[str, list[int]] = {}
+    """Exact match products sharing a JAN/barcode across sites.
 
+    Skips JAN codes that appear multiple times within the same site,
+    as that indicates bad data (e.g., CDN caching during scraping).
+    """
+    with_jan = df[df["jan_code"].notna() & (df["jan_code"] != "")]
+
+    # Find and exclude same-site duplicate JANs (bad data signal)
+    site_jan_counts = with_jan.groupby(["site", "jan_code"]).size().reset_index(name="cnt")
+    bad_jans = set(site_jan_counts[site_jan_counts["cnt"] > 1]["jan_code"])
+    if bad_jans:
+        with_jan = with_jan[~with_jan["jan_code"].isin(bad_jans)]
+
+    groups: dict[str, list[int]] = {}
     for jan, group in with_jan.groupby("jan_code"):
         if group["site"].nunique() < 2:
             continue
