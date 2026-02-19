@@ -94,13 +94,12 @@ def main():
         SELECT id, site, product_id, name, url
         FROM products
         WHERE (jan_code IS NULL OR jan_code = '')
-          AND site != 'comicsart'
           AND url IS NOT NULL AND url != ''
         ORDER BY site, CAST(product_id AS INTEGER)
     """).fetchall()
 
     total = len(rows)
-    print(f"Found {total} products missing JAN codes (excluding comicsart).\n")
+    print(f"Found {total} products missing JAN codes.\n")
 
     if total == 0:
         conn.close()
