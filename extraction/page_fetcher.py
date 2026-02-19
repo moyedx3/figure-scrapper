@@ -57,6 +57,11 @@ _LABEL_MAP: dict[str, dict[str, str]] = {
     },
     "comicsart": {
         "제조사": "page_manufacturer",
+        "JAN CODE": "jan_code",
+        "JAN": "jan_code",
+        "원작명": "series_hint",
+        "재질": "material",
+        "크기": "size",
     },
 }
 
@@ -98,7 +103,22 @@ def fetch_product_detail(url: str, site: str) -> Optional[dict[str, str]]:
             if not value or value == label:
                 continue
 
-            # Check if this label maps to a known field
+            for label_key, field_name in label_map.items():
+                if label_key in label:
+                    specs[field_name] = value
+                    break
+
+    # comicsart uses div.disnoul_left + sibling div instead of tables
+    if not specs:
+        for left_div in soup.select("div.disnoul_left"):
+            right_div = left_div.find_next_sibling("div")
+            if not right_div:
+                continue
+            label = left_div.get_text(strip=True).rstrip(":")
+            value = right_div.get_text(strip=True)
+            if not value or value == label:
+                continue
+
             for label_key, field_name in label_map.items():
                 if label_key in label:
                     specs[field_name] = value

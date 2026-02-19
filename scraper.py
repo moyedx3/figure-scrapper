@@ -157,7 +157,7 @@ def _post_scrape_enrich(changes: list):
     jan_found = 0
     for change in new_changes:
         p = change.product
-        if not p.url or p.site == "comicsart":
+        if not p.url:
             continue
 
         # Check if JAN was already saved during extraction
