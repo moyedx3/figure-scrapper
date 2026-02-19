@@ -82,6 +82,38 @@ CREATE TABLE IF NOT EXISTS watchlist (
     target_price INTEGER,
     added_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS telegram_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER UNIQUE NOT NULL,
+    username TEXT,
+    alert_new BOOLEAN DEFAULT 1,
+    alert_restock BOOLEAN DEFAULT 1,
+    alert_price BOOLEAN DEFAULT 1,
+    alert_soldout BOOLEAN DEFAULT 0,
+    is_active BOOLEAN DEFAULT 1,
+    created_at TEXT,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pending_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id TEXT NOT NULL,
+    change_type TEXT NOT NULL,
+    product_db_id INTEGER NOT NULL REFERENCES products(id),
+    site TEXT NOT NULL,
+    product_name TEXT NOT NULL,
+    product_price INTEGER,
+    product_url TEXT,
+    image_url TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    created_at TEXT NOT NULL,
+    sent_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_alerts_unsent
+    ON pending_alerts(sent_at) WHERE sent_at IS NULL;
 """
 
 

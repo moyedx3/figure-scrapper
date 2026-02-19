@@ -1,5 +1,7 @@
 """Site configurations for figure scraper."""
 
+import os
+
 REQUEST_DELAY = 1.5  # seconds between requests
 REQUEST_TIMEOUT = 15  # seconds
 USER_AGENT = (
@@ -15,6 +17,13 @@ DB_PATH = "figures.db"
 EXTRACTION_LLM_ENABLED = True       # Set False to use rules-only
 EXTRACTION_CONFIDENCE_THRESHOLD = 0.7  # Below this, use LLM
 EXTRACTION_MODEL = "claude-sonnet-4-5-20250929"
+
+# Telegram Bot settings
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_ENABLED = bool(TELEGRAM_BOT_TOKEN)
+DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "")
+ALERT_SUMMARY_THRESHOLD = 3   # Send summary header when >= N changes in a batch
+ALERT_STALE_HOURS = 1          # Summarize (don't flood) alerts older than this
 
 SITES = {
     "figurepresso": {

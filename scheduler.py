@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 def _scrape_job():
     """Job function called by scheduler."""
-    from scraper import scrape_all, _post_scrape_enrich
+    from scraper import scrape_all, _post_scrape_enrich, queue_alerts
     logger.info("=== Scheduled scrape starting ===")
     try:
         changes = scrape_all()
@@ -26,6 +26,8 @@ def _scrape_job():
         )
         if new > 0:
             _post_scrape_enrich(changes)
+        # Queue all changes for Telegram bot (after enrichment)
+        queue_alerts(changes)
     except Exception as e:
         logger.error(f"Scheduled scrape failed: {e}")
 

@@ -140,8 +140,16 @@ class ChangeDetector:
                     old_value=old_status,
                     new_value="soldout",
                 ))
+            elif product.status == "available" and old_status != "available":
+                # Became available (e.g., preorder → available) — treat as restock
+                changes.append(Change(
+                    change_type="restock",
+                    product=product,
+                    old_value=old_status or "",
+                    new_value="available",
+                ))
             else:
-                # Other status change
+                # Other status change (e.g., available → preorder)
                 changes.append(Change(
                     change_type="status",
                     product=product,
