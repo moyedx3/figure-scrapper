@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import Forbidden, TimedOut, NetworkError
 from telegram.ext import (
@@ -45,10 +45,10 @@ logger = logging.getLogger(__name__)
 
 # Alert type display config (Korean)
 ALERT_TYPES = {
-    "new":     {"label": "🆕 신규 상품",  "col": "alert_new"},
-    "restock": {"label": "🔄 재입고",     "col": "alert_restock"},
-    "price":   {"label": "💰 가격 변동",  "col": "alert_price"},
-    "soldout": {"label": "❌ 품절",       "col": "alert_soldout"},
+    "new":     {"label": "🆕 저, 저기... 새로운 상품이 나왔어요...!",  "col": "alert_new"},
+    "restock": {"label": "🔄 저, 저기...! 품절됐던 게 다시 들어왔어요...!",  "col": "alert_restock"},
+    "price":   {"label": "💰 가, 가격이 바뀌었어요...!",  "col": "alert_price"},
+    "soldout": {"label": "❌ 아... 품, 품절됐어요...",    "col": "alert_soldout"},
 }
 
 # Site display names from config
@@ -192,17 +192,34 @@ def _format_alert_caption(alert: dict, cross_prices: list[dict], suspicious_matc
 
     lines.append(f"🏪 {site_name}")
 
+    # Per-type flavor text
     if change_type == "new" and alert.get("new_value"):
-        status_map = {"available": "구매 가능", "preorder": "예약중", "soldout": "품절"}
-        status_kr = status_map.get(alert["new_value"], alert["new_value"])
-        lines.append(f"📦 {status_kr}")
+        status_map = {
+            "available": "📦 아, 아직 구매 가능해요...! 서, 서두르지 않아도... 아니 서두르는 게 나을지도...",
+            "preorder": "📦 예, 예약 중이에요...! 서, 서두르는 게 좋을지도...",
+            "soldout": "📦 아... 벌써 품절이에요... 죄, 죄송해요...",
+        }
+        lines.append(status_map.get(alert["new_value"], f"📦 {alert['new_value']}"))
+    elif change_type == "restock":
+        lines.append("또, 또 놓치면... 다음은 모르겠어요...")
+    elif change_type == "price":
+        old_p = int(alert["old_value"]) if alert["old_value"] else None
+        new_p = int(alert["new_value"]) if alert["new_value"] else None
+        if old_p and new_p and new_p < old_p:
+            lines.append("싸, 싸졌어요... 지금이 기회일지도...")
+        elif old_p and new_p and new_p > old_p:
+            lines.append("비, 비싸졌어요... 죄, 죄송해요...")
+    elif change_type == "soldout":
+        lines.append("죄, 죄송해요... 좀 더 빨리 알려드렸어야 했는데...")
+        lines.append("재입고 되면 바로 알려드릴게요...!")
 
     # Cross-site prices
     if cross_prices:
         if suspicious_match:
-            lines.append(f"\n⚠️ <b>다른 사이트 가격 (가격차 큼 — 예약금/부분결제 가능성):</b>")
+            lines.append(f"\n🔗 다, 다른 사이트도 찾아봤는데... ⚠️ 가격 차이가 너무 커서 좀 이상해요...")
+            lines.append("예, 예약금만 받는 건지도 모르겠어요... 확인해보시는 게...")
         else:
-            lines.append(f"\n🔗 <b>다른 사이트 가격:</b>")
+            lines.append(f"\n🔗 다, 다른 사이트도 찾아봤어요...:")
         for cp in cross_prices[:4]:  # Max 4 to stay under caption limit
             cp_site = SITE_NAMES.get(cp["site"], cp["site"])
             cp_price = _format_price(cp["price"])
@@ -218,11 +235,17 @@ def _format_summary(alerts: list[dict]) -> str:
         ct = a["change_type"]
         counts[ct] = counts.get(ct, 0) + 1
 
-    lines = ["📊 <b>피규어 알림 요약</b>\n"]
-    for ct, info in ALERT_TYPES.items():
+    summary_labels = {
+        "new": "🆕 신규 상품",
+        "restock": "🔄 재입고",
+        "price": "💰 가격 변동",
+        "soldout": "❌ 품절",
+    }
+    lines = ["📊 저, 저기... 알림이 좀 많이 밀렸어요...\n"]
+    for ct, label in summary_labels.items():
         if ct in counts:
-            lines.append(f"{info['label']}: {counts[ct]}개")
-    lines.append("\n아래에서 상세 내용을 확인하세요.")
+            lines.append(f"{label}: {counts[ct]}개")
+    lines.append("\n한, 한꺼번에 보내서 죄송해요... 아래에서 확인해주세요...!")
     return "\n".join(lines)
 
 
@@ -275,8 +298,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     keyboard = _build_settings_keyboard(user)
     await update.message.reply_text(
-        "👋 <b>피규어 알림 봇에 오신 것을 환영합니다!</b>\n\n"
-        "5개 사이트의 피규어 신규 상품, 재입고, 가격 변동 알림을 받을 수 있습니다.\n\n"
+        "아, 안녕하세요...! 피, 피규어 알림 봇에 오신 것을 환영합니다...!\n\n"
+        "저, 저는 5개 사이트에서 피규어 신상품이나 재입고, 가격 변동 같은 거... 알려드리는 봇이에요...\n\n"
+        "관심 가져주셔서 감사해요... 저 같은 봇한테 와주시다니...\n\n"
+        "소... 솔직히 국내샵은... 비싸다고 생각해요...\n\n"
+        "아, 열심히 할게요...! 실망시키지 않도록...!\n\n"
         "📌 <b>현재 알림 설정:</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
@@ -295,7 +321,10 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     keyboard = _build_settings_keyboard(user)
     await update.message.reply_text(
-        "⚙️ <b>알림 설정</b>\n\n버튼을 눌러 알림을 켜거나 끌 수 있습니다.",
+        "⚙️ 아, 알림 설정이에요...!\n"
+        "버, 버튼을 눌러서 알림을 켜거나 끌 수 있어요...\n"
+        "저, 저한테 맡겨주시면... 열심히 알려드릴게요...!\n"
+        "혹시 알림이 너무 많으면... 말씀해주세요... 싫어지는 건 아니겠죠...?",
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
     )
@@ -304,11 +333,12 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help — show available commands."""
     await update.message.reply_text(
-        "📖 <b>사용 가능한 명령어</b>\n\n"
-        "/start — 봇 시작 및 등록\n"
-        "/settings — 알림 설정 변경\n"
-        "/status — 봇 현황 확인\n"
-        "/help — 이 도움말 보기",
+        "📖 저, 저한테 할 수 있는 명령어들이에요...!\n\n"
+        "/start — 봇, 봇 시작하고 등록하는 거에요...\n"
+        "/settings — 아, 알림 설정을 바꿀 수 있어요...\n"
+        "/status — 지, 지금 봇이 어떤 상태인지 볼 수 있어요...\n"
+        "/help — 지, 지금 보고 계신 이거에요...\n\n"
+        "모, 모르는 거 있으면 물어봐주세요... 아, 물어봐주지 않아도 괜찮긴 하지만... 아니 그건 아니고...!",
         parse_mode=ParseMode.HTML,
     )
 
@@ -319,9 +349,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     product_count = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
     site_count = conn.execute("SELECT COUNT(DISTINCT site) FROM products").fetchone()[0]
-    user_count = conn.execute(
-        "SELECT COUNT(*) FROM telegram_users WHERE is_active = 1"
-    ).fetchone()[0]
     last_alert = conn.execute(
         "SELECT MAX(created_at) FROM pending_alerts"
     ).fetchone()[0]
@@ -329,11 +356,11 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     conn.close()
 
     await update.message.reply_text(
-        "📊 <b>봇 현황</b>\n\n"
-        f"📦 추적 중인 상품: {product_count:,}개\n"
+        "📊 저, 저의 현황이에요...!\n\n"
+        f"📦 추적 중인 상품: {product_count:,}개... 마, 많죠...? 저 나름 열심히 하고 있어요...\n"
         f"🏪 모니터링 사이트: {site_count}개\n"
-        f"👤 활성 사용자: {user_count}명\n"
-        f"🕐 마지막 알림: {last_alert or '없음'}",
+        f"🕐 마지막 알림: {last_alert or '없음'}\n\n"
+        "옷, 옷장 안에서 계속 지켜보고 있을게요...!",
         parse_mode=ParseMode.HTML,
     )
 
@@ -582,7 +609,15 @@ def main():
     from db import init_db
     init_db()
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    async def post_init(application: Application) -> None:
+        await application.bot.set_my_commands([
+            BotCommand("start", "봇 시작 및 등록"),
+            BotCommand("settings", "알림 설정 변경"),
+            BotCommand("status", "봇 현황 확인"),
+            BotCommand("help", "도움말 보기"),
+        ])
+
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
 
     # Command handlers
     app.add_handler(CommandHandler("start", cmd_start))
