@@ -29,7 +29,7 @@ if has_dates.empty:
     st.stop()
 
 # Compute delay: positive = late, negative = early
-today = pd.Timestamp.now()
+today = pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None)
 has_dates["expected"] = has_dates["release_date_parsed"]
 has_dates["delay_days"] = (today - has_dates["release_date_parsed"]).dt.days
 

@@ -66,7 +66,7 @@ def get_recent_new_products(days: int = 7) -> pd.DataFrame:
         """SELECT site, product_id, name, price, status, category,
                   manufacturer, image_url, url, first_seen_at
            FROM products
-           WHERE first_seen_at >= datetime('now', ?)
+           WHERE first_seen_at >= datetime('now', '+9 hours', ?)
            ORDER BY first_seen_at DESC""",
         conn,
         params=(f"-{days} days",),
@@ -83,7 +83,7 @@ def get_recent_changes(days: int = 7) -> pd.DataFrame:
                   p.site, p.name, p.price, p.url
            FROM status_changes sc
            JOIN products p ON sc.product_id = p.id
-           WHERE sc.changed_at >= datetime('now', ?)
+           WHERE sc.changed_at >= datetime('now', '+9 hours', ?)
            ORDER BY sc.changed_at DESC""",
         conn,
         params=(f"-{days} days",),
@@ -97,7 +97,7 @@ def get_count_by_change_type(days: int = 1) -> dict:
     """Count of new/restock/soldout/price changes in the last N days."""
     conn = get_conn()
     new_count = pd.read_sql_query(
-        "SELECT COUNT(*) as c FROM products WHERE first_seen_at >= datetime('now', ?)",
+        "SELECT COUNT(*) as c FROM products WHERE first_seen_at >= datetime('now', '+9 hours', ?)",
         conn,
         params=(f"-{days} days",),
     )["c"].iloc[0]
@@ -105,7 +105,7 @@ def get_count_by_change_type(days: int = 1) -> dict:
     changes = pd.read_sql_query(
         """SELECT change_type, new_value, COUNT(*) as c
            FROM status_changes
-           WHERE changed_at >= datetime('now', ?)
+           WHERE changed_at >= datetime('now', '+9 hours', ?)
            GROUP BY change_type, new_value""",
         conn,
         params=(f"-{days} days",),

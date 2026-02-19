@@ -1,8 +1,15 @@
 """SQLite database operations for figure scraper."""
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+KST = timezone(timedelta(hours=9))
+
+
+def now_kst() -> str:
+    """Return current time in KST as ISO format string."""
+    return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 from config import DB_PATH
 from models import Product
@@ -120,7 +127,7 @@ def _migrate_extraction_columns(conn: sqlite3.Connection):
 
 def upsert_product(conn: sqlite3.Connection, product: Product) -> int:
     """Insert or update a product. Returns the database row id."""
-    now = datetime.now().isoformat()
+    now = now_kst()
     row = conn.execute(
         "SELECT id, price, status FROM products WHERE site = ? AND product_id = ?",
         (product.site, product.product_id),
@@ -202,7 +209,7 @@ def get_soldout_products(conn: sqlite3.Connection, site: str) -> list[dict]:
 def update_product_status(
     conn: sqlite3.Connection, db_id: int, new_status: str
 ):
-    now = datetime.now().isoformat()
+    now = now_kst()
     updates = {"status": new_status, "last_checked_at": now}
     if new_status == "soldout":
         updates["soldout_at"] = now
@@ -238,7 +245,7 @@ def save_extraction(
     confidence: float,
 ):
     """Save structured extraction results to a product row."""
-    now = datetime.now().isoformat()
+    now = now_kst()
     conn.execute(
         """UPDATE products SET
             series = ?, character_name = ?, scale = ?, version = ?,
