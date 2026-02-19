@@ -1,4 +1,6 @@
-figures.db
+*.db
+*.sqlite
+*.sqlite3
 __pycache__/
 *.pyc
 .venv/
@@ -7,4 +9,11 @@ venv/
 dist/
 build/
 .env
+.env.*
 docs/solutions/infrastructure/
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
+*.bak
