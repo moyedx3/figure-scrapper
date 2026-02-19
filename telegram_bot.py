@@ -124,14 +124,18 @@ def _deactivate_user(conn: sqlite3.Connection, chat_id: int):
     logger.info(f"Deactivated user {chat_id} (blocked bot)")
 
 
-def _get_cross_site_prices(conn: sqlite3.Connection, product_db_id: int) -> list[dict]:
-    """Get prices from other sites for the same product via matching groups."""
+def _get_cross_site_prices(conn: sqlite3.Connection, product_db_id: int) -> tuple[list[dict], bool]:
+    """Get prices from other sites for the same product via matching groups.
+
+    Returns (matches, is_suspicious) where is_suspicious is True if
+    max price >= 2x min price (likely deposit vs full price).
+    """
     row = conn.execute(
         "SELECT match_key FROM product_matches WHERE product_id = ?",
         (product_db_id,),
     ).fetchone()
     if not row:
-        return []
+        return [], False
 
     matches = conn.execute("""
         SELECT p.site, p.name, p.price, p.status, p.url
@@ -140,7 +144,19 @@ def _get_cross_site_prices(conn: sqlite3.Connection, product_db_id: int) -> list
         WHERE pm.match_key = ? AND pm.product_id != ?
         ORDER BY p.price ASC NULLS LAST
     """, (row["match_key"], product_db_id)).fetchall()
-    return [dict(m) for m in matches]
+    results = [dict(m) for m in matches]
+
+    # Check if group has suspicious pricing (2x+ spread)
+    all_prices_rows = conn.execute("""
+        SELECT p.price
+        FROM product_matches pm
+        JOIN products p ON pm.product_id = p.id
+        WHERE pm.match_key = ? AND p.price IS NOT NULL AND p.price > 0
+    """, (row["match_key"],)).fetchall()
+    prices = [r["price"] for r in all_prices_rows]
+    is_suspicious = len(prices) >= 2 and max(prices) >= 2 * min(prices)
+
+    return results, is_suspicious
 
 
 # ──────────────────────────────────────────────
@@ -153,7 +169,7 @@ def _format_price(price: int | None) -> str:
     return f"₩{price:,}"
 
 
-def _format_alert_caption(alert: dict, cross_prices: list[dict]) -> str:
+def _format_alert_caption(alert: dict, cross_prices: list[dict], suspicious_match: bool = False) -> str:
     """Format an alert into an HTML caption for Telegram."""
     change_type = alert["change_type"]
     header = ALERT_TYPES.get(change_type, {}).get("label", change_type)
@@ -183,7 +199,10 @@ def _format_alert_caption(alert: dict, cross_prices: list[dict]) -> str:
 
     # Cross-site prices
     if cross_prices:
-        lines.append(f"\n🔗 <b>다른 사이트 가격:</b>")
+        if suspicious_match:
+            lines.append(f"\n⚠️ <b>다른 사이트 가격 (가격차 큼 — 예약금/부분결제 가능성):</b>")
+        else:
+            lines.append(f"\n🔗 <b>다른 사이트 가격:</b>")
         for cp in cross_prices[:4]:  # Max 4 to stay under caption limit
             cp_site = SITE_NAMES.get(cp["site"], cp["site"])
             cp_price = _format_price(cp["price"])
@@ -471,8 +490,8 @@ async def process_pending_alerts(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
                 continue
 
-            cross_prices = _get_cross_site_prices(conn, alert["product_db_id"])
-            caption = _format_alert_caption(alert, cross_prices)
+            cross_prices, suspicious_match = _get_cross_site_prices(conn, alert["product_db_id"])
+            caption = _format_alert_caption(alert, cross_prices, suspicious_match)
             keyboard = _build_alert_keyboard(alert)
 
             for chat_id in target_users:

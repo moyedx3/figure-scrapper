@@ -53,7 +53,11 @@ with col_f2:
 with col_f3:
     min_diff = st.number_input("최소 가격 차이 (원)", min_value=0, value=0, step=1000)
 
-buyable_only = st.checkbox("🛒 구매 가능한 상품만 보기", value=False, help="품절이 아닌 상품이 2개 사이트 이상에서 판매 중인 매칭만 표시")
+col_cb1, col_cb2 = st.columns(2)
+with col_cb1:
+    buyable_only = st.checkbox("🛒 구매 가능한 상품만 보기", value=False, help="품절이 아닌 상품이 2개 사이트 이상에서 판매 중인 매칭만 표시")
+with col_cb2:
+    hide_suspicious = st.checkbox("⚠️ 가격차 2배 이상 제외", value=False, help="최고가가 최저가의 2배 이상인 매칭 숨기기 (예약금/부분결제 가능성)")
 
 # --- Build comparison table ---
 rows = []
@@ -123,6 +127,11 @@ for match_key, group in matches_df.groupby("match_key"):
     most_expensive = priced["price"].max()
     price_diff = most_expensive - cheapest_price
     saving_pct = price_diff / most_expensive * 100 if most_expensive > 0 else 0
+    is_suspicious = most_expensive >= 2 * cheapest_price
+
+    # Filter: hide suspicious price matches if checkbox checked
+    if hide_suspicious and is_suspicious:
+        continue
 
     row = {
         "상품명": display_name,
@@ -138,6 +147,7 @@ for match_key, group in matches_df.groupby("match_key"):
         "가격차": price_diff,
         "절약%": round(saving_pct, 1),
         "사이트 수": len(group),
+        "⚠️": "의심" if is_suspicious else "",
         "_urls": urls_by_site,
         "_names": names_by_site,
         "_status": status_by_site,
