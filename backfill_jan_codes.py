@@ -40,6 +40,8 @@ def _fetch_jan(url: str, site: str, session: requests.Session) -> str | None:
         return None
 
     soup = BeautifulSoup(resp.text, "lxml")
+
+    # Method 1: th/td table rows (most Cafe24 sites)
     for table in soup.select("table"):
         for row in table.select("tr"):
             th = row.select_one("th")
@@ -55,6 +57,22 @@ def _fetch_jan(url: str, site: str, session: requests.Session) -> str | None:
                     jan = value.strip()
                     if len(jan) >= 8:
                         return jan
+
+    # Method 2: div.disnoul_left + sibling div (comicsart)
+    for left_div in soup.select("div.disnoul_left"):
+        right_div = left_div.find_next_sibling("div")
+        if not right_div:
+            continue
+        label = left_div.get_text(strip=True).rstrip(":")
+        value = right_div.get_text(strip=True)
+        if not value or value == label:
+            continue
+        for label_key, field_name in label_map.items():
+            if label_key in label and field_name == "jan_code":
+                jan = value.strip()
+                if len(jan) >= 8:
+                    return jan
+
     return None
 
 
