@@ -12,7 +12,7 @@ from config import REQUEST_TIMEOUT, USER_AGENT
 logger = logging.getLogger(__name__)
 
 # Delay between page fetches to be polite
-_FETCH_DELAY = 0.5
+_FETCH_DELAY = 2.0
 
 _session: Optional[requests.Session] = None
 
