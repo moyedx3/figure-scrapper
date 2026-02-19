@@ -4,6 +4,9 @@
 Fetches in parallel across sites (CDN caching is per-site),
 with 2s delays within each site to avoid stale cached responses.
 
+Uses fetch_product_detail() from page_fetcher.py — the single source
+of truth for detail page parsing. Do NOT duplicate parsing logic here.
+
 Run on VPS:
     source .venv/bin/activate
     python backfill_jan_codes.py
@@ -21,76 +24,27 @@ import requests
 from bs4 import BeautifulSoup
 
 from config import DB_PATH, REQUEST_TIMEOUT, USER_AGENT
-from extraction.page_fetcher import _LABEL_MAP
+from extraction.page_fetcher import fetch_product_detail, _LABEL_MAP
 
-# Each site gets its own session to avoid cross-site interference
 _SITE_DELAY = 2.0
 
 
-def _fetch_jan(url: str, site: str, session: requests.Session) -> str | None:
-    """Fetch a single product page and extract JAN code."""
-    label_map = _LABEL_MAP.get(site, {})
-    if not label_map:
-        return None
-    try:
-        resp = session.get(url, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "utf-8"
-    except requests.RequestException:
-        return None
-
-    soup = BeautifulSoup(resp.text, "lxml")
-
-    # Method 1: th/td table rows (most Cafe24 sites)
-    for table in soup.select("table"):
-        for row in table.select("tr"):
-            th = row.select_one("th")
-            td = row.select_one("td")
-            if not th or not td:
-                continue
-            label = th.get_text(strip=True).rstrip(":")
-            value = td.get_text(strip=True)
-            if not value or value == label:
-                continue
-            for label_key, field_name in label_map.items():
-                if label_key in label and field_name == "jan_code":
-                    jan = value.strip()
-                    if len(jan) >= 8:
-                        return jan
-
-    # Method 2: div.disnoul_left + sibling div (comicsart)
-    for left_div in soup.select("div.disnoul_left"):
-        right_div = left_div.find_next_sibling("div")
-        if not right_div:
-            continue
-        label = left_div.get_text(strip=True).rstrip(":")
-        value = right_div.get_text(strip=True)
-        if not value or value == label:
-            continue
-        for label_key, field_name in label_map.items():
-            if label_key in label and field_name == "jan_code":
-                jan = value.strip()
-                if len(jan) >= 8:
-                    return jan
-
-    return None
-
-
 def _process_site(site: str, products: list[dict], results: list, lock: threading.Lock):
-    """Process all products for a single site with per-site session and delays."""
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": USER_AGENT,
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-    })
-
+    """Process all products for a single site with delays."""
     fixed = 0
     skipped = 0
     for i, row in enumerate(products, 1):
         if i > 1:
             time.sleep(_SITE_DELAY)
 
-        jan = _fetch_jan(row["url"], site, session)
+        # Reuse the main parsing function — single source of truth
+        specs = fetch_product_detail(row["url"], site)
+        jan = None
+        if specs and specs.get("jan_code"):
+            jan = specs["jan_code"].strip()
+            if len(jan) < 8:
+                jan = None
+
         if jan:
             with lock:
                 results.append((jan, row["id"]))
