@@ -234,6 +234,50 @@ def _clear_duplicate_jan_codes(conn) -> int:
     return cleared
 
 
+def queue_alerts(changes: list):
+    """Write detected changes to pending_alerts for the Telegram bot."""
+    from config import TELEGRAM_ENABLED
+    if not TELEGRAM_ENABLED or not changes:
+        return
+
+    import uuid
+    from db import get_connection, now_kst
+
+    conn = get_connection()
+    batch_id = now_kst().replace(" ", "_") + "_" + uuid.uuid4().hex[:6]
+
+    queued = 0
+    for change in changes:
+        if change.change_type not in ("new", "restock", "price", "soldout"):
+            continue
+
+        p = change.product
+        row = conn.execute(
+            "SELECT id FROM products WHERE site = ? AND product_id = ?",
+            (p.site, p.product_id),
+        ).fetchone()
+        if not row:
+            continue
+
+        conn.execute("""
+            INSERT INTO pending_alerts
+                (batch_id, change_type, product_db_id, site,
+                 product_name, product_price, product_url, image_url,
+                 old_value, new_value, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            batch_id, change.change_type, row["id"], p.site,
+            p.name, p.price, p.url, p.image_url,
+            change.old_value, change.new_value, now_kst(),
+        ))
+        queued += 1
+
+    conn.commit()
+    conn.close()
+    if queued:
+        logger.info(f"=== Queued {queued} alerts (batch {batch_id}) ===")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Figure website scraper")
     parser.add_argument(
@@ -277,6 +321,9 @@ def main():
         # Post-scrape: fetch JAN codes for new products and re-run matching
         if new > 0:
             _post_scrape_enrich(changes)
+
+        # Queue alerts for Telegram bot
+        queue_alerts(changes)
     else:
         # Run with scheduler
         from scheduler import run_scheduler

@@ -53,7 +53,7 @@ latest_crawl = get_latest_crawl_time()
 if latest_crawl:
     # Products first seen within 5 minutes of the latest crawl are "new this session"
     cutoff = pd.Timestamp(latest_crawl) - pd.Timedelta(minutes=5)
-    filtered["first_seen_ts"] = pd.to_datetime(filtered["first_seen_at"])
+    filtered["first_seen_ts"] = pd.to_datetime(filtered["first_seen_at"], format="mixed")
     filtered["is_new"] = filtered["first_seen_ts"] >= cutoff
     new_count = filtered["is_new"].sum()
     filtered["상품명"] = filtered.apply(
