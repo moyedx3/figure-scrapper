@@ -1,6 +1,6 @@
 # Figure Scrapper
 
-한국 피규어 쇼핑몰 5곳을 자동으로 모니터링하여 신상품, 재입고, 가격 변동을 감지하고 교차 사이트 가격 비교를 제공하는 스크래퍼 + 분석 대시보드.
+한국 피규어 쇼핑몰 5곳을 자동 모니터링하여 신상품, 재입고, 가격 변동을 감지하고 **Telegram 알림** + **교차 사이트 가격 비교**를 제공합니다.
 
 ## 대상 사이트
 
@@ -17,61 +17,55 @@
 ## 주요 기능
 
 ### 스크래핑 & 변경 감지
-- 5개 사이트 카테고리 페이지 자동 크롤링 (15분 간격 스케줄러)
+- 5개 사이트 카테고리 페이지 자동 크롤링 (15분 간격)
 - 신상품, 재입고, 품절, 가격 변동 실시간 감지
 - 모든 변경 이력 SQLite DB에 기록
 
 ### AI 기반 상품 구조화
-- **Sonnet 4.5 LLM**으로 상품명에서 시리즈, 캐릭터, 제조사, 스케일, 상품유형 등 추출
+- **Claude Sonnet** LLM으로 상품명에서 시리즈, 캐릭터, 제조사, 스케일, 상품유형 추출
 - 상품 상세 페이지에서 JAN 코드(바코드), 제조사, 사양 자동 수집
 - 신상품 등록 시 자동 추출 (LLM + 페이지 fetch)
 
 ### 교차 사이트 매칭 & 가격 비교
-- **JAN 코드 매칭** — 바코드 일치로 동일 상품 100% 정확 매칭 (242개 그룹)
-- **구조화 필드 매칭** — 시리즈 + 캐릭터 + 제조사 + 상품유형 기반 3단계 매칭 (82개 그룹)
+- **JAN 코드 매칭** — 바코드 일치로 동일 상품 100% 정확 매칭
+- **구조화 필드 매칭** — 시리즈 + 캐릭터 + 제조사 + 상품유형 기반 3단계 매칭
 - 사이트별 최저가 비교, 절약률 계산
+- 가격차 2배 이상 의심 매칭 자동 플래그 (예약금/부분결제 구분)
+
+### Telegram 알림 봇
+- 신상품, 재입고, 품절, 가격 변동 알림 (사진 + 가격 포함)
+- `/settings`로 알림 유형별 ON/OFF 설정
+- 교차 사이트 가격 비교 정보 알림에 포함
+- 대량 알림 시 요약 헤더 + 개별 메시지 구조
+- 1시간 이상 밀린 알림은 요약만 발송 (스팸 방지)
 
 ### Streamlit 분석 대시보드
 - 📊 **개요** — 사이트별 상품 수, 상태 분포, 가격 분포
-- 🆕 **신상품 피드** — 최근 크롤링 신상품 🆕 배지 표시
-- 💰 **가격 비교** — JAN/구조 매칭 기반 교차 사이트 가격 비교, 구매 가능 필터
+- 🆕 **신상품 피드** — 최근 크롤링 신상품 표시
+- 💰 **가격 비교** — JAN/구조 매칭 기반 교차 사이트 가격 비교
 - ⚡ **품절 속도** — 등록~품절 소요 시간 분석
 - 🔄 **재입고 패턴** — 재입고 이력, 품절 기간, 가격 변동
 - 🗺️ **사이트 커버리지** — 카테고리/상태별 사이트 비교
 - 📅 **예약 정확도** — 발매일 기반 예약 상품 추적
 - 🔬 **추출 현황** — LLM 추출 커버리지, 샘플 테스트
 
-## 작동 방식
+## 아키텍처
 
 ```
-[Scheduler: 15분 간격]
-  → 5개 사이트의 카테고리 페이지 크롤링 (페이지네이션 포함)
-    → Cafe24 HTML 파싱 → Product 객체 추출
-      → SQLite DB와 비교 → 변경 감지 (신상품/재입고/가격/품절)
-      → 신상품 발견 시:
-        → 상세 페이지 fetch → JAN 코드 + 스펙 수집
-        → Sonnet 4.5 LLM → 구조화 필드 추출
-        → 교차 사이트 매칭 자동 갱신
+[Scraper] 15분 간격 크롤링
+    → Cafe24 HTML 파싱 → 변경 감지
+    → 신상품: 상세 페이지 fetch + LLM 추출
+    → 변경사항 → pending_alerts 테이블에 큐잉
+                        ↓
+[Telegram Bot] 30초 간격 폴링
+    → pending_alerts 읽기 → 사진 + 가격 비교 포맷
+    → 구독 유저에게 발송
+                        ↓
+[Dashboard] Streamlit (별도 프로세스)
+    → SQLite 읽기 전용 → 8개 분석 페이지
 ```
 
-### 감지 로직
-
-| 이벤트 | 조건 | DB 기록 |
-|--------|------|---------|
-| 신상품 | DB에 없는 `(site, product_id)` 최초 등장 | `products` INSERT + LLM 추출 |
-| 재입고 | 기존 status `soldout` → `available` | `status_changes` 기록 |
-| 품절 | 기존 status → `soldout` 변경 | `status_changes` + `soldout_at` |
-| 가격변동 | `price` 값이 이전과 다름 | `status_changes` + `price_history` |
-
-### DB 스키마
-
-```
-products          — 상품 정보 + 구조화 추출 결과 (시리즈, 캐릭터, 제조사, JAN 등)
-status_changes    — 상태/가격 변경 이력
-price_history     — 가격 추적 (매 스크래핑마다 기록)
-product_matches   — 교차 사이트 상품 매칭 (JAN + 구조화 필드)
-watchlist         — 관심 상품 재입고 감시
-```
+3개 프로세스가 **SQLite WAL 모드**로 동시 접근. 스크래퍼만 쓰기, 나머지는 읽기.
 
 ## 설치
 
@@ -83,28 +77,29 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-`.env` 파일에 Anthropic API 키 설정 (LLM 추출용):
+`.env` 파일 설정:
 ```
-ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=your-api-key-here
+TELEGRAM_BOT_TOKEN=your-bot-token-here
 ```
 
 ## 사용법
 
 ```bash
-# 전체 사이트 1회 스크래핑 (신상품 자동 추출 + 매칭 갱신)
+# 전체 사이트 1회 스크래핑
 python scraper.py --once
 
 # 특정 사이트만
 python scraper.py --site figurepresso --once
 
-# 15분 간격 자동 스케줄러 실행
+# 15분 간격 자동 스케줄러
 python scraper.py
 
 # 기존 상품 구조화 추출 (미추출 상품만)
 python scraper.py --extract
 
-# 전체 상품 재추출 (LLM)
-python scraper.py --re-extract
+# Telegram 봇 실행
+python telegram_bot.py
 
 # 대시보드 실행
 streamlit run dashboard.py
@@ -126,6 +121,7 @@ streamlit run dashboard.py
 ```
 figure-scrapper/
 ├── scraper.py              # CLI 진입점 (--once, --site, --extract)
+├── telegram_bot.py         # Telegram 알림 봇
 ├── scheduler.py            # APScheduler 15분 루프
 ├── detector.py             # 변경 감지 (신상품/재입고/가격)
 ├── db.py                   # SQLite 스키마 + CRUD
@@ -141,7 +137,7 @@ figure-scrapper/
 │   └── ttabbaemall.py
 ├── extraction/
 │   ├── extractor.py        # 추출 파이프라인 (규칙 + LLM)
-│   ├── llm.py              # Sonnet 4.5 프롬프트 + 호출
+│   ├── llm.py              # Claude LLM 프롬프트 + 호출
 │   ├── models.py           # ProductAttributes 스키마
 │   └── page_fetcher.py     # 상세 페이지 fetch + JAN 코드 추출
 ├── analytics/
@@ -151,33 +147,32 @@ figure-scrapper/
 └── pages/                  # Streamlit 대시보드 페이지 (8개)
 ```
 
-## 현재 성과
+## DB 스키마
 
-- **2,870+** 상품 모니터링 중 (5개 사이트)
-- **2,163** JAN 코드 수집 (91% 커버리지)
-- **324** 교차 사이트 매칭 그룹 (242 JAN + 82 구조화)
-- **100%** 상품유형 추출률, **93%** 시리즈, **88%** 캐릭터/제조사
+```
+products          — 상품 정보 + 구조화 추출 결과 (시리즈, 캐릭터, 제조사, JAN 등)
+status_changes    — 상태/가격 변경 이력
+price_history     — 가격 추적 (매 스크래핑마다 기록)
+product_matches   — 교차 사이트 상품 매칭 (JAN + 구조화 필드)
+pending_alerts    — Telegram 알림 큐 (스크래퍼 → 봇)
+telegram_users    — 봇 구독자 + 알림 설정
+```
+
+## 현재 현황
+
+- **3,100+** 상품 모니터링 중 (5개 사이트)
+- **2,400+** JAN 코드 수집 (77% 커버리지)
+- **400+** 교차 사이트 매칭 그룹 (JAN + 구조화)
+- Telegram 봇 실시간 알림 운영 중
 
 ## 로드맵
 
 - [x] **Phase 1** — Scraper Core (5개 사이트 파서, 변경 감지, 스케줄러)
-- [x] **Phase 2** — AI 추출 & 매칭 (Sonnet 4.5 구조화, JAN 매칭, 가격 비교)
+- [x] **Phase 2** — AI 추출 & 매칭 (Claude 구조화, JAN 매칭, 가격 비교)
 - [x] **Phase 3** — Analytics Dashboard (Streamlit 8개 페이지)
-- [ ] **Phase 4** — Telegram 알림 연동
-- [ ] **Phase 5** — 중고 마켓 연동
+- [x] **Phase 4** — Telegram 알림 봇
+- [ ] **Phase 5** — 중고 마켓 연동 (Mercari, 번개장터)
 
-## Future Directions
+## License
 
-### Telegram 알림
-- 재입고 알림: 품절 상품이 다시 입고되면 즉시 알림
-- 신상품 알림: 관심 키워드/시리즈 매칭 시 알림
-- 가격 변동 알림: 교차 사이트 최저가 변동 시 알림
-- 새로운 매칭 그룹 발견 알림
-
-### 중고 마켓 연동
-- **Mercari (메루카리)** — API 기반, 일본 최대 중고 피규어 마켓. JAN 코드로 매칭 가능. 우선순위 1순위
-- **번개장터** — API 기반, 한국 중고 마켓
-- **Amazon Japan** — Product Advertising API, ASIN 코드 매칭
-- **중고나라** — 네이버 카페 구조, 파싱 난이도 높음
-
-중고가 vs 신품가 비교로 "지금 중고로 사는 게 나은가, 신품 최저가를 노리는 게 나은가" 판단 지원.
+MIT
