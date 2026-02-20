@@ -379,6 +379,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "관심 가져주셔서 감사해요... 저 같은 봇한테 와주시다니...\n\n"
         "소... 솔직히 국내샵은... 비싸다고 생각해요...\n\n"
         "아, 열심히 할게요...! 실망시키지 않도록...!\n\n"
+        "💡 <b>관심 키워드 설정</b>\n"
+        "알림이 너무 많으면... /watch 원신 이렇게 관심 키워드를 등록해보세요...!\n"
+        "등록한 키워드 관련 상품만 알려드릴게요...!\n\n"
         "📌 <b>현재 알림 설정:</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
@@ -399,8 +402,9 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(
         "⚙️ 아, 알림 설정이에요...!\n"
         "버, 버튼을 눌러서 알림을 켜거나 끌 수 있어요...\n"
-        "저, 저한테 맡겨주시면... 열심히 알려드릴게요...!\n"
-        "혹시 알림이 너무 많으면... 말씀해주세요... 싫어지는 건 아니겠죠...?",
+        "저, 저한테 맡겨주시면... 열심히 알려드릴게요...!\n\n"
+        "💡 특정 캐릭터나 시리즈만 받고 싶으면... /watch 원신 이렇게 등록해보세요...!\n"
+        "/mywatches 에서 관심 목록을 확인할 수 있어요...",
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
     )
