@@ -96,6 +96,14 @@ CREATE TABLE IF NOT EXISTS telegram_users (
     updated_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS user_watches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    keyword TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(chat_id, keyword)
+);
+
 CREATE TABLE IF NOT EXISTS pending_alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     batch_id TEXT NOT NULL,
