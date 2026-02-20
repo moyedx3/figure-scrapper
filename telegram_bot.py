@@ -114,6 +114,62 @@ def _get_active_users_for_type(conn: sqlite3.Connection, change_type: str) -> li
     return [r["chat_id"] for r in rows]
 
 
+def _add_watch(conn: sqlite3.Connection, chat_id: int, keyword: str) -> str:
+    """Add a watch keyword. Returns: 'added', 'exists', 'limit'."""
+    keyword = keyword.strip().lower()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM user_watches WHERE chat_id = ?", (chat_id,)
+    ).fetchone()[0]
+    if count >= 10:
+        return "limit"
+    try:
+        conn.execute(
+            "INSERT INTO user_watches (chat_id, keyword, created_at) VALUES (?, ?, ?)",
+            (chat_id, keyword, now_kst()),
+        )
+        conn.commit()
+        return "added"
+    except sqlite3.IntegrityError:
+        return "exists"
+
+
+def _remove_watch(conn: sqlite3.Connection, chat_id: int, watch_id: int) -> bool:
+    """Remove a watch by id. Returns True if deleted."""
+    result = conn.execute(
+        "DELETE FROM user_watches WHERE id = ? AND chat_id = ?",
+        (watch_id, chat_id),
+    )
+    conn.commit()
+    return result.rowcount > 0
+
+
+def _remove_watch_by_keyword(conn: sqlite3.Connection, chat_id: int, keyword: str) -> bool:
+    """Remove a watch by keyword text. Returns True if deleted."""
+    keyword = keyword.strip().lower()
+    result = conn.execute(
+        "DELETE FROM user_watches WHERE chat_id = ? AND keyword = ?",
+        (chat_id, keyword),
+    )
+    conn.commit()
+    return result.rowcount > 0
+
+
+def _get_watches(conn: sqlite3.Connection, chat_id: int) -> list[dict]:
+    """Get all watches for a user."""
+    rows = conn.execute(
+        "SELECT id, keyword FROM user_watches WHERE chat_id = ? ORDER BY id",
+        (chat_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _get_watch_count(conn: sqlite3.Connection, chat_id: int) -> int:
+    """Get number of watches for a user."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM user_watches WHERE chat_id = ?", (chat_id,)
+    ).fetchone()[0]
+
+
 def _deactivate_user(conn: sqlite3.Connection, chat_id: int):
     """Mark user as inactive (blocked the bot)."""
     conn.execute(
@@ -169,13 +225,33 @@ def _format_price(price: int | None) -> str:
     return f"₩{price:,}"
 
 
-def _format_alert_caption(alert: dict, cross_prices: list[dict], suspicious_match: bool = False) -> str:
+def _matches_watch(keyword: str, series: str | None, character_name: str | None, product_name: str) -> bool:
+    """Check if a watch keyword matches a product. Case-insensitive substring."""
+    kw = keyword  # already lowercase from storage
+    if series and kw in series.lower():
+        return True
+    if character_name and kw in character_name.lower():
+        return True
+    if kw in product_name.lower():
+        return True
+    return False
+
+
+def _format_alert_caption(
+    alert: dict,
+    cross_prices: list[dict],
+    suspicious_match: bool = False,
+    matched_keyword: str | None = None,
+) -> str:
     """Format an alert into an HTML caption for Telegram."""
     change_type = alert["change_type"]
     header = ALERT_TYPES.get(change_type, {}).get("label", change_type)
     site_name = SITE_NAMES.get(alert["site"], alert["site"])
 
-    lines = [f"{header}\n"]
+    lines = []
+    if matched_keyword:
+        lines.append(f"🔔 {_escape_html(matched_keyword)}\n")
+    lines.append(f"{header}\n")
     lines.append(f"<b>{_escape_html(alert['product_name'])}</b>\n")
 
     if change_type == "price":
@@ -336,6 +412,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "📖 저, 저한테 할 수 있는 명령어들이에요...!\n\n"
         "/start — 봇, 봇 시작하고 등록하는 거에요...\n"
         "/settings — 아, 알림 설정을 바꿀 수 있어요...\n"
+        "/watch 원신 — 관, 관심 키워드를 추가할 수 있어요...\n"
+        "/unwatch 원신 — 관심 키워드를 삭제해요...\n"
+        "/mywatches — 관, 관심 목록을 볼 수 있어요...\n"
         "/status — 지, 지금 봇이 어떤 상태인지 볼 수 있어요...\n"
         "/help — 지, 지금 보고 계신 이거에요...\n\n"
         "모, 모르는 거 있으면 물어봐주세요... 아, 물어봐주지 않아도 괜찮긴 하지만... 아니 그건 아니고...!",
@@ -388,6 +467,164 @@ async def callback_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     keyboard = _build_settings_keyboard(user)
     await query.edit_message_reply_markup(reply_markup=keyboard)
+
+
+# ──────────────────────────────────────────────
+# Watch command handlers
+# ──────────────────────────────────────────────
+
+async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /watch <keyword> — add a watch keyword."""
+    conn = get_connection()
+    _get_or_create_user(conn, update.effective_chat.id, update.effective_user.username)
+
+    keyword = " ".join(context.args) if context.args else ""
+    if not keyword.strip():
+        conn.close()
+        await update.message.reply_text(
+            "아, 저기... 키워드를 알려주셔야 해요...!\n"
+            "사용법: /watch 원신 또는 /watch 하츠네 미쿠",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    keyword = keyword.strip()
+    if len(keyword) < 2:
+        conn.close()
+        await update.message.reply_text(
+            "아, 저기... 2글자 이상으로 입력해주시면...!",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    result = _add_watch(conn, update.effective_chat.id, keyword)
+    count = _get_watch_count(conn, update.effective_chat.id)
+    conn.close()
+
+    if result == "added":
+        await update.message.reply_text(
+            f'저, 저기... "{_escape_html(keyword)}" 추가했어요...! '
+            f"이제 관련 상품이 나오면 바로 알려드릴게요...!\n"
+            f"📋 현재 관심 목록: {count}/10개",
+            parse_mode=ParseMode.HTML,
+        )
+    elif result == "exists":
+        await update.message.reply_text(
+            "아, 그건 이미 목록에 있어요...! 걱정 마세요, 잘 지켜보고 있을게요...!",
+            parse_mode=ParseMode.HTML,
+        )
+    elif result == "limit":
+        await update.message.reply_text(
+            "죄, 죄송해요... 관심 목록이 가득 찼어요... (10/10개)\n"
+            "/mywatches에서 안 보는 키워드를 지워주시면...!",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+async def cmd_unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /unwatch <keyword> — remove a watch keyword."""
+    conn = get_connection()
+    _get_or_create_user(conn, update.effective_chat.id, update.effective_user.username)
+
+    keyword = " ".join(context.args) if context.args else ""
+    if not keyword.strip():
+        conn.close()
+        await update.message.reply_text(
+            "아, 저기... 삭제할 키워드를 알려주셔야 해요...!\n"
+            "사용법: /unwatch 원신",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    removed = _remove_watch_by_keyword(conn, update.effective_chat.id, keyword.strip())
+    count = _get_watch_count(conn, update.effective_chat.id)
+    conn.close()
+
+    if removed:
+        await update.message.reply_text(
+            f'"{_escape_html(keyword.strip())}" 삭제했어요...! 📋 남은 관심 목록: {count}/10개',
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await update.message.reply_text(
+            "어, 그 키워드는 목록에 없는 것 같은데... /mywatches에서 확인해보실래요...?",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+async def cmd_mywatches(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /mywatches — show current watches with remove buttons."""
+    conn = get_connection()
+    _get_or_create_user(conn, update.effective_chat.id, update.effective_user.username)
+    watches = _get_watches(conn, update.effective_chat.id)
+    conn.close()
+
+    if not watches:
+        await update.message.reply_text(
+            "아, 아직 관심 목록이 비어있어요...\n"
+            "/watch 원신 이렇게 추가해주시면... 관련 상품만 알려드릴게요...!\n"
+            "관심 목록이 없으면 모든 알림을 보내드려요...!",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    buttons = []
+    for w in watches:
+        buttons.append([InlineKeyboardButton(
+            f"❌ {w['keyword']}",
+            callback_data=f"unwatch_{w['id']}",
+        )])
+    keyboard = InlineKeyboardMarkup(buttons)
+
+    await update.message.reply_text(
+        f"📋 저, 저한테 맡겨주신 관심 목록이에요...! ({len(watches)}/10개)\n"
+        "버튼을 누르면 삭제할 수 있어요...",
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+    )
+
+
+async def callback_unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle inline button press to remove a watch."""
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if not data or not data.startswith("unwatch_"):
+        return
+
+    try:
+        watch_id = int(data.replace("unwatch_", ""))
+    except ValueError:
+        return
+
+    conn = get_connection()
+    _remove_watch(conn, update.effective_chat.id, watch_id)
+    watches = _get_watches(conn, update.effective_chat.id)
+    conn.close()
+
+    if not watches:
+        await query.edit_message_text(
+            "📋 관심 목록이 비었어요...!\n"
+            "이제 모든 알림을 보내드릴게요...!",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    buttons = []
+    for w in watches:
+        buttons.append([InlineKeyboardButton(
+            f"❌ {w['keyword']}",
+            callback_data=f"unwatch_{w['id']}",
+        )])
+    keyboard = InlineKeyboardMarkup(buttons)
+
+    await query.edit_message_text(
+        f"📋 저, 저한테 맡겨주신 관심 목록이에요...! ({len(watches)}/10개)\n"
+        "버튼을 누르면 삭제할 수 있어요...",
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+    )
 
 
 # ──────────────────────────────────────────────
@@ -446,6 +683,14 @@ async def process_pending_alerts(context: ContextTypes.DEFAULT_TYPE) -> None:
             conn.close()
             logger.info(f"Sent stale backlog summary ({total} alerts)")
             return
+
+    # Preload all user watches {chat_id: [keyword, ...]}
+    watch_rows = conn.execute(
+        "SELECT chat_id, keyword FROM user_watches"
+    ).fetchall()
+    user_watches: dict[int, list[str]] = {}
+    for wr in watch_rows:
+        user_watches.setdefault(wr["chat_id"], []).append(wr["keyword"])
 
     # Normal processing: get unsent alerts grouped by batch
     unsent = conn.execute("""
@@ -517,46 +762,68 @@ async def process_pending_alerts(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
                 continue
 
+            # Load product structured fields for watch matching
+            prod_row = conn.execute(
+                "SELECT series, character_name FROM products WHERE id = ?",
+                (alert["product_db_id"],),
+            ).fetchone()
+            p_series = prod_row["series"] if prod_row else None
+            p_char = prod_row["character_name"] if prod_row else None
+            p_name = alert["product_name"]
+
+            # Group users by matched watch keyword (None = no watches)
+            match_groups: dict[str | None, list[int]] = {}
+            for chat_id in target_users:
+                watches = user_watches.get(chat_id, [])
+                if not watches:
+                    match_groups.setdefault(None, []).append(chat_id)
+                else:
+                    matched = None
+                    for kw in watches:
+                        if _matches_watch(kw, p_series, p_char, p_name):
+                            matched = kw
+                            break
+                    if matched is not None:
+                        match_groups.setdefault(matched, []).append(chat_id)
+                    # else: user has watches but none matched — skip
+
+            if not match_groups:
+                conn.execute(
+                    "UPDATE pending_alerts SET sent_at = ? WHERE id = ?",
+                    (now_kst(), alert["id"]),
+                )
+                continue
+
             cross_prices, suspicious_match = _get_cross_site_prices(conn, alert["product_db_id"])
-            caption = _format_alert_caption(alert, cross_prices, suspicious_match)
             keyboard = _build_alert_keyboard(alert)
 
-            for chat_id in target_users:
-                try:
-                    if alert.get("image_url"):
-                        await context.bot.send_photo(
-                            chat_id=chat_id,
-                            photo=alert["image_url"],
-                            caption=caption,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=keyboard,
-                        )
-                    else:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=caption,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=keyboard,
-                        )
-                    await asyncio.sleep(0.05)
-                except Forbidden:
-                    _deactivate_user(conn, chat_id)
-                except (TimedOut, NetworkError) as e:
-                    # Retry once after short delay
-                    logger.warning(f"Transient error sending to {chat_id}, retrying: {e}")
-                    await asyncio.sleep(5)
+            for matched_kw, group_users in match_groups.items():
+                caption = _format_alert_caption(alert, cross_prices, suspicious_match, matched_kw)
+
+                for chat_id in group_users:
                     try:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=caption,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=keyboard,
-                        )
-                    except Exception:
-                        logger.warning(f"Retry failed for {chat_id}")
-                except Exception as e:
-                    # sendPhoto may fail if CDN blocks Telegram — fallback to text
-                    if alert.get("image_url"):
+                        if alert.get("image_url"):
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=alert["image_url"],
+                                caption=caption,
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=keyboard,
+                            )
+                        else:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=caption,
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=keyboard,
+                            )
+                        await asyncio.sleep(0.05)
+                    except Forbidden:
+                        _deactivate_user(conn, chat_id)
+                    except (TimedOut, NetworkError) as e:
+                        # Retry once after short delay
+                        logger.warning(f"Transient error sending to {chat_id}, retrying: {e}")
+                        await asyncio.sleep(5)
                         try:
                             await context.bot.send_message(
                                 chat_id=chat_id,
@@ -565,9 +832,21 @@ async def process_pending_alerts(context: ContextTypes.DEFAULT_TYPE) -> None:
                                 reply_markup=keyboard,
                             )
                         except Exception:
-                            logger.warning(f"Text fallback also failed for {chat_id}: {e}")
-                    else:
-                        logger.warning(f"Failed to send alert to {chat_id}: {e}")
+                            logger.warning(f"Retry failed for {chat_id}")
+                    except Exception as e:
+                        # sendPhoto may fail if CDN blocks Telegram — fallback to text
+                        if alert.get("image_url"):
+                            try:
+                                await context.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=caption,
+                                    parse_mode=ParseMode.HTML,
+                                    reply_markup=keyboard,
+                                )
+                            except Exception:
+                                logger.warning(f"Text fallback also failed for {chat_id}: {e}")
+                        else:
+                            logger.warning(f"Failed to send alert to {chat_id}: {e}")
 
             # Mark alert as sent
             conn.execute(
@@ -613,6 +892,9 @@ def main():
         await application.bot.set_my_commands([
             BotCommand("start", "봇 시작 및 등록"),
             BotCommand("settings", "알림 설정 변경"),
+            BotCommand("watch", "관심 키워드 추가"),
+            BotCommand("unwatch", "관심 키워드 삭제"),
+            BotCommand("mywatches", "관심 목록 보기"),
             BotCommand("status", "봇 현황 확인"),
             BotCommand("help", "도움말 보기"),
         ])
@@ -625,8 +907,14 @@ def main():
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
 
-    # Callback handler for settings toggles
+    # Watch command handlers
+    app.add_handler(CommandHandler("watch", cmd_watch))
+    app.add_handler(CommandHandler("unwatch", cmd_unwatch))
+    app.add_handler(CommandHandler("mywatches", cmd_mywatches))
+
+    # Callback handlers
     app.add_handler(CallbackQueryHandler(callback_toggle, pattern="^toggle_"))
+    app.add_handler(CallbackQueryHandler(callback_unwatch, pattern="^unwatch_"))
 
     # Job queue: poll pending alerts every 30 seconds
     app.job_queue.run_repeating(
