@@ -28,7 +28,6 @@ from telegram.ext import (
 
 from config import (
     ALERT_STALE_HOURS,
-    ALERT_SUMMARY_THRESHOLD,
     DASHBOARD_URL,
     DB_PATH,
     SITES,
@@ -301,27 +300,6 @@ def _format_alert_caption(
             cp_price = _format_price(cp["price"])
             lines.append(f" · {cp_site}: {cp_price}")
 
-    return "\n".join(lines)
-
-
-def _format_summary(alerts: list[dict]) -> str:
-    """Format a batch summary header message."""
-    counts = {}
-    for a in alerts:
-        ct = a["change_type"]
-        counts[ct] = counts.get(ct, 0) + 1
-
-    summary_labels = {
-        "new": "🆕 신규 상품",
-        "restock": "🔄 재입고",
-        "price": "💰 가격 변동",
-        "soldout": "❌ 품절",
-    }
-    lines = ["📊 저, 저기... 알림이 좀 많이 밀렸어요...\n"]
-    for ct, label in summary_labels.items():
-        if ct in counts:
-            lines.append(f"{label}: {counts[ct]}개")
-    lines.append("\n한, 한꺼번에 보내서 죄송해요... 아래에서 확인해주세요...!")
     return "\n".join(lines)
 
 
@@ -739,22 +717,6 @@ async def process_pending_alerts(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
             conn.commit()
             continue
-
-        # Send summary header if batch is large enough
-        if len(alerts) >= ALERT_SUMMARY_THRESHOLD:
-            summary = _format_summary(alerts)
-            for chat_id in all_users:
-                try:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=summary,
-                        parse_mode=ParseMode.HTML,
-                    )
-                    await asyncio.sleep(0.05)
-                except Forbidden:
-                    _deactivate_user(conn, chat_id)
-                except Exception as e:
-                    logger.warning(f"Failed to send summary to {chat_id}: {e}")
 
         # Send individual alerts
         for alert in alerts:
